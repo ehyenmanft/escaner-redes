@@ -1,0 +1,4 @@
+# historial local: contiene las MAC e IPs de tu red
+dispositivos.json
+__pycache__/
+*.csv
