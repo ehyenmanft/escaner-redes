@@ -31,6 +31,16 @@ python escaner_red.py --test   # pruebas rápidas
 - **Herramientas**: vaciar DNS, renovar IP, restablecer proxy, Winsock y TCP/IP, desactivar SMBv1, listas y bloqueo automático.
 - **Registro**: historial de acciones en `registro.log`.
 
+## Bandeja y widget
+
+Al cerrar la ventana sigue en la bandeja del sistema, junto al reloj: clic en el icono para abrirla, clic derecho para
+escanear, mostrar u ocultar el widget y salir. Solo puede haber una abierta a la vez. Necesita Tk 9 (incluido en
+Python 3.14); con versiones anteriores funciona sin bandeja. Los dispositivos nuevos y otros avisos llegan como
+notificación de Windows.
+
+El widget flotante muestra bajada, subida, conexiones y alertas siempre encima de las ventanas. Se arrastra para moverlo
+y recuerda su posición.
+
 Cambiar la configuración del sistema necesita permisos: pulsa «elevar» abajo a la izquierda. La clasificación de riesgo
 es una ayuda heurística y no sustituye a un antivirus. Solo se pueden cortar conexiones TCP IPv4.
 Interfaz glass, igual que Antimalware y Optimizador PC.
