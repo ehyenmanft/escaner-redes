@@ -15,8 +15,26 @@ python escaner_red.py --test   # pruebas rápidas
 
 ## Funciones
 
-- Escaneo por ping + tabla ARP (encuentra también equipos que bloquean el ping)
-- Tipo probable: router, este PC, inalámbrico (MAC aleatoria)
-- Historial en `dispositivos.json`: marca dispositivos **NUEVOS** y desconectados
-- Alias por dispositivo, fabricante por MAC (api.macvendors.com), puertos comunes
-- Abrir la web del dispositivo, exportar a CSV, vigilancia cada 5 minutos con aviso
+- **Panel**: conexiones, alertas, tráfico en vivo, IP pública (api.ipify.org), firewall, Wi-Fi y acceso a la LAN.
+- **Dispositivos LAN**: escaneo por ping (API de Windows, dos pasadas) + tabla ARP, que encuentra también equipos que
+  bloquean el ping. Empieza solo al abrir la app; `F5` repite. En redes mayores que /22 recorre el bloque de tu IP.
+  Marca **NUEVOS** y desconectados, con alias (doble clic), fabricante (api.macvendors.com), puertos, CSV y vigilancia
+  cada 5 minutos. Avisa si una VPN o un cortafuegos bloquea la red local.
+- **Conexiones**: TCP/UDP con proceso, firma digital, host y servicio, clasificadas como Segura, Revisar, Peligrosa o
+  Desconocida con su motivo. Permite cortar la conexión, terminar el proceso, bloquear la IP o el programa y marcarlos
+  como de confianza o peligrosos.
+- **Adaptadores**: habilitar, deshabilitar, DNS (Cloudflare, Google, Quad9, AdGuard o automático), IP automática o fija.
+- **Wi-Fi**: redes con su seguridad, conectar, desconectar y olvidar perfiles.
+- **Firewall**: activar perfiles, protección rápida (entradas a SMB, RDP, NetBIOS, Telnet y VNC) y reglas creadas aquí.
+- **Pruebas de red**: diagnóstico, velocidad (speed.cloudflare.com), ping, traceroute, comparar DNS y probar puertos.
+- **Métricas**: ancho de banda por interfaz, picos, datos de la sesión e historial de conexiones.
+- **Herramientas**: vaciar DNS, renovar IP, restablecer proxy, Winsock y TCP/IP, desactivar SMBv1, listas y bloqueo automático.
+- **Registro**: historial de acciones en `registro.log`.
+
+Cambiar la configuración del sistema necesita permisos: pulsa «elevar» abajo a la izquierda. La clasificación de riesgo
+es una ayuda heurística y no sustituye a un antivirus. Solo se pueden cortar conexiones TCP IPv4.
+Interfaz glass, igual que Antimalware y Optimizador PC.
+
+## Licencia
+
+MIT. Consulta [LICENSE](LICENSE).
