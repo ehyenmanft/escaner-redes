@@ -633,12 +633,12 @@ def human_size(n):
 
 # ---------------------------------------------------------------- interfaz
 FONT = "Segoe UI"
-BG, SIDE, CARD, CARD2, LINE = "#0a0d12", "#0d1118", "#1a212d", "#262e3b", "#465061"
+BG, SIDE, CARD, CARD2, LINE = "#07090d", "#090c11", "#131923", "#1e2532", "#3c4554"
 TEXT, MUTED, ACCENT, ACCENT_HOVER = "#ffffff", "#b6c0cc", "#76b900", "#8acc14"
-HOVER, SELECTED, NAV_ON = "#323b4a", "#2b3d14", "#1e2a12"
-GLASS_ALPHA = 0.96  # opacidad de la ventana
+HOVER, SELECTED, NAV_ON = "#2b3342", "#2b3d14", "#1e2a12"
+GLASS_ALPHA = 0.97  # opacidad de la ventana
 # Windows suma el fondo a los colores oscuros: sin esta capa (0xAABBGGRR) un fondo claro se come el texto
-GLASS_TINT = 0xD8120D0A
+GLASS_TINT = 0xF0100B08
 TONES = {"ok": ("#22c55e", "#0f2a1c"), "warn": ("#fbbf24", "#33240c"), "bad": ("#f87171", "#3a1620")}
 BLOCKED_TEXT = ("Una VPN o un cortafuegos está bloqueando la red local: solo se ven este PC y el router. "
                 "Desactívala o permite el acceso a la LAN y vuelve a escanear.")
@@ -657,14 +657,14 @@ class App:
     HEAD = ("", "IP", "MAC", "Alias", "Nombre de red", "Fabricante", "Tipo", "Ping", "Puertos", "Primera vez")
     WIDTH = (50, 95, 120, 75, 95, 95, 125, 40, 90, 115)
 
-    def __init__(self, root):
+    def __init__(self, root, mutex=None):
         import tkinter as tk
         from tkinter import ttk
-        self.tk, self.ttk, self.root = tk, ttk, root
+        self.tk, self.ttk, self.root, self.mutex = tk, ttk, root, mutex
         self.db, self.rows, self.ifaces, self.q, self.busy = load_db(), [], [], queue.Queue(), False
         self.corner_cache, self.sort_by, self.watch_job = {}, ("estado", False), None
-        self.lists = {"confianza": [], "bloqueo": [], "auto": False, **load_json(CONFIG_FILE)}
-        self.conns, self.sigs, self.host_cache, self.history, self.seen_conns = [], {}, {}, [], set()
+        self.lists = {"confianza": [], "bloqueo": [], "auto": False, "widget": True, **load_json(CONFIG_FILE)}
+        self.conns, self.sigs, self.host_cache, self.seen_conns = {}, {}, {}, set()
         self.page, self.loaded, self.polling, self.blocked_ips = None, set(), False, set()
         self.counters, self.rates, self.traffic, self.totals, self.peak = {}, {}, [(0, 0)] * 60, [0, 0], 0
         root.title("Escáner de red")
@@ -717,6 +717,8 @@ class App:
 
         self.refresh()
         self.show("panel")
+        self.build_tray()
+        self.build_widget()
         self.poll()
         self.find_networks()
         self.tick_traffic()
@@ -729,6 +731,8 @@ class App:
         self.page = key
         for k in self.nav:
             self.paint_nav(k)
+        if key == "conexiones":
+            self.paint_connections()
         if key not in self.loaded:  # cada página pide sus datos la primera vez que se abre
             self.loaded.add(key)
             load = getattr(self, f"load_{key}", None)
@@ -744,8 +748,133 @@ class App:
 
     def elevate(self):
         here = Path(__file__).resolve()
+        if self.mutex:  # la copia elevada no debe encontrar esta abierta
+            ctypes.windll.kernel32.CloseHandle(self.mutex)
+            self.mutex = None
         if ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, f'"{here}"', str(here.parent), 1) > 32:
-            self.root.destroy()
+            self.quit()
+
+    # ---- bandeja del sistema (Tk 9: tk systray / tk sysnotify)
+    def build_tray(self):
+        tk = self.tk
+        self.logo = tk.PhotoImage(file=Path(__file__).with_name("escaner.png"))
+        self.tray_menu = tk.Menu(self.root, tearoff=0, bg=CARD, fg=TEXT, activebackground=SELECTED,
+                                 activeforeground="#ffffff", bd=0, font=(FONT, 9))
+        for label, cmd in (("Abrir Escáner de red", self.show_window), ("Escanear ahora", self.start_scan),
+                           ("Ocultar widget", lambda: self.set_widget(not self.lists["widget"])), (None, None), ("Salir", self.quit)):
+            if label:
+                self.tray_menu.add_command(label=label, command=cmd)
+            else:
+                self.tray_menu.add_separator()
+        try:
+            self.root.tk.call("tk", "systray", "create", "-image", self.logo, "-text", "Escáner de red",
+                              "-button1", self.root.register(self.show_window),
+                              "-button3", self.root.register(self.tray_popup))
+            self.tray = True
+        except tk.TclError:  # Tk 8.6 o anterior: sin bandeja, cerrar sale de la app
+            self.tray = False
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.told_tray = False
+
+    def tray_popup(self):
+        self.tray_menu.tk_popup(*self.root.winfo_pointerxy())
+
+    def show_window(self):
+        self.root.deiconify()
+        ctypes.windll.user32.ShowWindow(self.hwnd, 9)  # SW_RESTORE: por si se minimizó
+        self.root.lift()
+        self.root.focus_force()
+
+    def close(self):
+        if not self.tray:
+            self.quit()
+            return
+        self.root.withdraw()
+        if not self.told_tray:  # avisar solo la primera vez
+            self.told_tray = True
+            self.notify("Escáner de red sigue activo", "Está en la bandeja, junto al reloj. Clic derecho en el icono para salir.")
+
+    def quit(self):
+        if self.tray:
+            self.root.tk.call("tk", "systray", "destroy")
+        self.root.destroy()
+
+    def notify(self, title, msg):
+        try:
+            self.root.tk.call("tk", "sysnotify", title, msg[:250])
+        except self.tk.TclError:
+            pass  # sin bandeja no hay notificaciones; el aviso queda en el registro
+
+    # ---- widget flotante
+    def build_widget(self):
+        tk = self.tk
+        w = self.widget = tk.Toplevel(self.root, bg=BG, highlightthickness=1, highlightbackground=LINE)
+        w.withdraw()
+        w.title("Widget Escáner de red")
+        self.widget_hwnd = self.blur(w)
+        w.attributes("-topmost", True)
+        head = tk.Frame(w, bg=BG)
+        head.pack(fill="x", padx=(12, 4), pady=(6, 2))
+        name = tk.Label(head, text="Escáner de red", font=(FONT, 9, "bold"), fg=TEXT, bg=BG)
+        name.pack(side="left")
+        for glyph, cmd, label in (("\ue8bb", lambda: self.set_widget(False), "Ocultar widget"), ("\ue8a7", self.show_window, "Abrir la app")):
+            tk.Button(head, text=glyph, command=cmd, font=("Segoe MDL2 Assets", 8), bg=BG, fg=MUTED, relief="flat", bd=0, padx=7, pady=3,
+                      activebackground=HOVER, activeforeground=TEXT, cursor="hand2", takefocus=True).pack(side="right")
+        grid = tk.Frame(w, bg=BG)
+        grid.pack(fill="x", padx=12, pady=(0, 9))
+        grid.columnconfigure((0, 1), weight=1, uniform="w")
+        self.w_vals, labels = {}, [w, head, name, grid]
+        for n, (key, caption) in enumerate((("down", "Bajada"), ("up", "Subida"), ("conn", "Conexiones"), ("alert", "Alertas"))):
+            cell = tk.Frame(grid, bg=BG)
+            cell.grid(row=n // 2, column=n % 2, sticky="w", pady=1)
+            cap = tk.Label(cell, text=caption, font=(FONT, 8), fg=MUTED, bg=BG)
+            cap.pack(anchor="w")
+            self.w_vals[key] = tk.Label(cell, text="–", font=(FONT, 11, "bold"), fg=TEXT, bg=BG)
+            self.w_vals[key].pack(anchor="w")
+            labels += [cell, cap, self.w_vals[key]]
+        for item in labels:
+            item.bind("<Button-1>", self.drag_widget)
+        w.update_idletasks()
+        w.geometry(f"{max(w.winfo_reqwidth(), 210)}x{w.winfo_reqheight()}+{self.widget_x()}+{self.widget_y()}")
+        self.set_widget(self.lists["widget"])
+
+    def work_area(self):
+        rect = (ctypes.c_long * 4)()
+        ctypes.windll.user32.SystemParametersInfoW(48, 0, rect, 0)  # SPI_GETWORKAREA: sin la barra de tareas
+        return list(rect)
+
+    def widget_x(self):
+        left, _, right, _ = self.work_area()
+        x = self.lists.get("widget_pos", [None])[0]
+        return x if x is not None and left <= x < right - 40 else right - max(self.widget.winfo_reqwidth(), 210) - 12
+
+    def widget_y(self):
+        _, top, _, bottom = self.work_area()
+        pos = self.lists.get("widget_pos", [None, None])
+        return pos[1] if pos[1] is not None and top <= pos[1] < bottom - 40 else bottom - self.widget.winfo_reqheight() - 12
+
+    def drag_widget(self, event):
+        self.drag(event, self.widget_hwnd)  # vuelve al soltar el ratón
+        self.lists["widget_pos"] = [self.widget.winfo_rootx(), self.widget.winfo_rooty()]
+        self.save_lists()
+
+    def set_widget(self, on):
+        self.widget.deiconify() if on else self.widget.withdraw()
+        self.lists["widget"] = on
+        self.save_lists()
+        self.tray_menu.entryconfigure(2, label="Ocultar widget" if on else "Mostrar widget")
+
+    def paint_status(self, down, up):
+        """Widget y texto del icono de la bandeja."""
+        alerts = sum(c["nivel"] == "Peligrosa" for c in self.conns.values())
+        live = sum(bool(c["rip"]) for c in self.conns.values())
+        self.w_vals["down"].configure(text=human_rate(down))
+        self.w_vals["up"].configure(text=human_rate(up))
+        self.w_vals["conn"].configure(text=str(live))
+        self.w_vals["alert"].configure(text=str(alerts), fg=TONES["bad" if alerts else "ok"][0])
+        if self.tray:
+            self.root.tk.call("tk", "systray", "configure", "-text",
+                              f"Escáner de red · {live} conexiones" + (f" · {alerts} alertas" if alerts else ""))
 
     # ---- páginas
     def build_panel(self, page):
@@ -957,31 +1086,36 @@ class App:
 
     def fill(self, tree, rows):
         """Sustituye las filas [(iid, valores, etiqueta)] conservando la selección."""
-        selected = tree.selection()
+        selected, top = tree.selection(), tree.yview()[0]
         tree.delete(*tree.get_children())
         for iid, values, tag in rows:
             tree.insert("", "end", iid=iid, values=values, tags=(tag,))
         tree.selection_set([k for k in selected if tree.exists(k)])
+        tree.yview_moveto(top)
 
     # ---- ventana glass (la misma que Antimalware)
-    def glass(self):
-        """Ventana sin marco de Windows y con fondo desenfocado, como el optimizador (ACCENT_ENABLE_BLURBEHIND)."""
+    def blur(self, window):
+        """Fondo desenfocado de una ventana sin marco, como el optimizador (ACCENT_ENABLE_BLURBEHIND). Devuelve su HWND."""
         class Accent(ctypes.Structure):
             _fields_ = [("state", ctypes.c_int), ("flags", ctypes.c_int), ("color", ctypes.c_uint), ("anim", ctypes.c_int)]
 
         class Data(ctypes.Structure):
             _fields_ = [("attr", ctypes.c_int), ("data", ctypes.c_void_p), ("size", ctypes.c_size_t)]
-        u32 = ctypes.windll.user32
-        self.root.overrideredirect(True)
-        self.root.update_idletasks()
-        self.hwnd = u32.GetParent(self.root.winfo_id())
+        window.overrideredirect(True)
+        window.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
         try:
             accent = Accent(3, 2, GLASS_TINT, 0)  # 3 = desenfoque, 2 = usar el color
             data = Data(19, ctypes.cast(ctypes.byref(accent), ctypes.c_void_p), ctypes.sizeof(accent))  # 19 = WCA_ACCENT_POLICY
-            u32.SetWindowCompositionAttribute(self.hwnd, ctypes.byref(data))
-            self.root.attributes("-alpha", GLASS_ALPHA)
+            ctypes.windll.user32.SetWindowCompositionAttribute(hwnd, ctypes.byref(data))
+            window.attributes("-alpha", GLASS_ALPHA)
         except Exception:
             pass  # Windows antiguo: ventana opaca
+        return hwnd
+
+    def glass(self):
+        u32 = ctypes.windll.user32
+        self.hwnd = self.blur(self.root)
         # sin marco Tk la saca de la barra de tareas: APPWINDOW la devuelve y MINIMIZEBOX deja minimizarla desde ahí.
         # Va después de -alpha, que reescribe estos estilos; ocultar y mostrar hace que la barra de tareas la vea
         u32.SetWindowLongW(self.hwnd, -20, u32.GetWindowLongW(self.hwnd, -20) & ~0x80 | 0x40000)
@@ -1001,7 +1135,7 @@ class App:
         name.pack(side="left")
         tagline = tk.Label(bar, text="Dispositivos de tu red local", font=(FONT, 8), fg=MUTED, bg=SIDE)
         tagline.pack(side="left", padx=10)
-        for glyph, cmd, hover in (("", self.root.destroy, "#c42b1c"), ("", self.minimize, HOVER)):
+        for glyph, cmd, hover in (("", self.close, "#c42b1c"), ("", self.minimize, HOVER)):
             b = tk.Button(bar, text=glyph, command=cmd, font=("Segoe MDL2 Assets", 9), bg=SIDE, fg=TEXT, relief="flat", bd=0,
                           activebackground=hover, activeforeground=TEXT, padx=18, pady=10, cursor="hand2")
             b.pack(side="right", fill="y")
@@ -1010,9 +1144,9 @@ class App:
         for w in (bar, logo, name, tagline):
             w.bind("<Button-1>", self.drag)
 
-    def drag(self, event):
+    def drag(self, event, hwnd=None):
         ctypes.windll.user32.ReleaseCapture()
-        ctypes.windll.user32.SendMessageW(self.hwnd, 0xA1, 2, 0)  # WM_NCLBUTTONDOWN + HTCAPTION: Windows mueve la ventana
+        ctypes.windll.user32.SendMessageW(hwnd or self.hwnd, 0xA1, 2, 0)  # WM_NCLBUTTONDOWN + HTCAPTION: Windows mueve la ventana
 
     def resize(self, event):
         w, h = self.root.minsize()
@@ -1199,8 +1333,9 @@ class App:
         new = [r for r in self.rows if r["nuevo"]]
         self.status.set(f"{sum(r['online'] for r in self.rows)} dispositivos conectados, {len(new)} nuevos. Último escaneo {now}.")
         if alert and new:
-            from tkinter import messagebox
-            messagebox.showwarning("Dispositivo nuevo", "\n".join(f"{r['ip']}  {r['mac']}" for r in new), parent=self.root)
+            text = ", ".join(f"{r['ip']} {r['mac']}" for r in new)
+            self.log(f"Dispositivo nuevo: {text}")
+            self.notify("Dispositivo nuevo en la red", text)
 
     def toggle_watch(self):
         if self.watch_job:
@@ -1289,7 +1424,7 @@ class App:
             self.q.put(lambda: apply(data))
         threading.Thread(target=work, daemon=True).start()
 
-    def pick(self, tree, rows, key="iid"):
+    def pick(self, tree, rows):
         sel = tree.selection()
         if not sel:
             self.status.set("Selecciona una fila de la lista.")
@@ -1306,25 +1441,27 @@ class App:
         def work():
             try:
                 rows = connections()
+
+                def publish():
+                    ready = [{**c, "host": self.host_cache.get(c["rip"], "")} for c in rows]
+                    for c in ready:
+                        c["nivel"], c["motivo"] = classify(c, self.sigs.get(c["ruta"], ""), self.lists)
+                    self.q.put(lambda: self.show_connections(ready))
                 paths = {c["ruta"] for c in rows if c["ruta"]} - self.sigs.keys()
-                self.sigs.update({p: "" for p in paths} | signatures(sorted(paths)))
                 ips = {c["rip"] for c in rows if c["rip"] and not ipaddress.ip_address(c["rip"]).is_private} - self.host_cache.keys()
-                self.host_cache.update({ip: "" for ip in ips} | hostnames(ips, 1.5))
-                for c in rows:
-                    c["nivel"], c["motivo"] = classify(c, self.sigs.get(c["ruta"], ""), self.lists)
-                    c["host"] = self.host_cache.get(c["rip"], "")
-                self.q.put(lambda: self.show_connections(rows))
+                if paths or ips:  # las firmas tardan varios segundos: primero se enseña lo que ya se sabe
+                    publish()
+                    self.sigs.update({p: "" for p in paths} | signatures(sorted(paths)))
+                    self.host_cache.update({ip: "" for ip in ips} | hostnames(ips, 1.5))
+                publish()
             finally:
                 self.polling = False
         threading.Thread(target=work, daemon=True).start()
 
     def show_connections(self, rows):
         self.conns = {c["id"]: c for c in rows}
-        order = {"Peligrosa": 0, "Revisar": 1, "Desconocida": 2, "Segura": 3}
-        self.fill(self.c_tree, [(c["id"], (c["nivel"], c["proceso"], c["proto"], f"{c['lip']}:{c['lport']}",
-                                           f"{c['rip']}:{c['rport']}" if c["rip"] else "", c["host"], c["servicio"],
-                                           c["estado"], c["motivo"]), c["nivel"])
-                                for c in sorted(rows, key=lambda c: (order[c["nivel"]], c["proceso"].lower()))])
+        if self.page == "conexiones":
+            self.paint_connections()
         alerts = [c for c in rows if c["nivel"] == "Peligrosa"]
         live = [c for c in rows if c["rip"]]
         self.p_conn[0].configure(text=str(len(live)))
@@ -1343,6 +1480,13 @@ class App:
                 if c["rip"] and c["rip"] not in self.blocked_ips and not ipaddress.ip_address(c["rip"]).is_private:
                     self.blocked_ips.add(c["rip"])
                     self.load(lambda ip=c["rip"]: self.auto_block(ip), self.log)
+
+    def paint_connections(self):
+        order = {"Peligrosa": 0, "Revisar": 1, "Desconocida": 2, "Segura": 3}
+        self.fill(self.c_tree, [(c["id"], (c["nivel"], c["proceso"], c["proto"], f"{c['lip']}:{c['lport']}",
+                                           f"{c['rip']}:{c['rport']}" if c["rip"] else "", c["host"], c["servicio"],
+                                           c["estado"], c["motivo"]), c["nivel"])
+                                for c in sorted(self.conns.values(), key=lambda c: (order[c["nivel"]], c["proceso"].lower()))])
 
     @staticmethod
     def auto_block(ip):
@@ -1613,7 +1757,11 @@ class App:
         self.m_down[0].configure(text=human_size(self.totals[0]))
         self.m_up[0].configure(text=human_size(self.totals[1]))
         self.m_peak[0].configure(text=human_rate(self.peak))
-        self.fill(self.m_tree, [(n, (n, human_rate(r[0]), human_rate(r[1])), "") for n, r in self.rates.items()])
+        self.paint_status(down, up)
+        if self.root.state() == "withdrawn":
+            return
+        if self.page == "metricas":
+            self.fill(self.m_tree, [(n, (n, human_rate(r[0]), human_rate(r[1])), "") for n, r in self.rates.items()])
         if self.page == "panel":
             self.draw_chart()
 
@@ -1708,10 +1856,6 @@ class App:
             self.status.set(f"Exportado a {path}")
         except OSError as e:  # lo más habitual: el archivo está abierto en Excel
             self.status.set(f"No se pudo exportar: {e}")
-
-
-def norm_keys_ok():
-    return all(c["id"] and c["proceso"] for c in connections())
 
 
 def self_test():
@@ -1816,7 +1960,9 @@ SSID 2 : Libre
         except ValueError:
             pass
     assert isinstance(if_counters(), dict) and human_rate(1500) == "2 KB/s" and human_size(2_500_000_000) == "2.50 GB"
-    assert signatures([sys.executable])[sys.executable] == "Valid" and norm_keys_ok()
+    assert signatures([sys.executable])[sys.executable] == "Valid"
+    rows = connections()
+    assert all(c["id"] and c["proceso"] for c in rows) and len({c["id"] for c in rows}) == len(rows)
 
     # guardar es atómico y un archivo dañado no se pierde
     DB_FILE = Path(tempfile.mkdtemp(), "dispositivos.json")
@@ -1839,6 +1985,13 @@ if __name__ == "__main__":
                 print(BLOCKED_TEXT)
     else:
         import tkinter as tk
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        mutex = k32.CreateMutexW(None, False, "Local\\EscanerDeRed")  # vive hasta que el proceso termina
+        if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS: ya hay una abierta (quizá en la bandeja)
+            from tkinter import messagebox
+            tk.Tk().withdraw()
+            messagebox.showinfo("Escáner de red", "Ya está abierto: búscalo en la bandeja del sistema, junto al reloj.")
+            sys.exit()
         root = tk.Tk()
-        App(root)
+        App(root, mutex)
         root.mainloop()
