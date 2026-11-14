@@ -811,7 +811,7 @@ class App:
         w = self.widget = tk.Toplevel(self.root, bg=BG, highlightthickness=1, highlightbackground=LINE)
         w.withdraw()
         w.title("Widget Escáner de red")
-        self.widget_hwnd = self.blur(w)
+        self.blur(w)
         w.attributes("-topmost", True)
         head = tk.Frame(w, bg=BG)
         head.pack(fill="x", padx=(12, 4), pady=(6, 2))
@@ -823,7 +823,7 @@ class App:
         grid = tk.Frame(w, bg=BG)
         grid.pack(fill="x", padx=12, pady=(0, 9))
         grid.columnconfigure((0, 1), weight=1, uniform="w")
-        self.w_vals, labels = {}, [w, head, name, grid]
+        self.w_vals = {}
         for n, (key, caption) in enumerate((("down", "Bajada"), ("up", "Subida"), ("conn", "Conexiones"), ("alert", "Alertas"))):
             cell = tk.Frame(grid, bg=BG)
             cell.grid(row=n // 2, column=n % 2, sticky="w", pady=1)
@@ -831,9 +831,7 @@ class App:
             cap.pack(anchor="w")
             self.w_vals[key] = tk.Label(cell, text="–", font=(FONT, 11, "bold"), fg=TEXT, bg=BG)
             self.w_vals[key].pack(anchor="w")
-            labels += [cell, cap, self.w_vals[key]]
-        for item in labels:
-            item.bind("<Button-1>", self.drag_widget)
+        self.movable(w, [w], self.save_widget_pos)  # lo enlazado a la ventana vale para todo lo que contiene
         w.update_idletasks()
         w.geometry(f"{max(w.winfo_reqwidth(), 210)}x{w.winfo_reqheight()}+{self.widget_x()}+{self.widget_y()}")
         self.set_widget(self.lists["widget"])
@@ -853,8 +851,7 @@ class App:
         pos = self.lists.get("widget_pos", [None, None])
         return pos[1] if pos[1] is not None and top <= pos[1] < bottom - 40 else bottom - self.widget.winfo_reqheight() - 12
 
-    def drag_widget(self, event):
-        self.drag(event, self.widget_hwnd)  # vuelve al soltar el ratón
+    def save_widget_pos(self, event):
         self.lists["widget_pos"] = [self.widget.winfo_rootx(), self.widget.winfo_rooty()]
         self.save_lists()
 
@@ -1141,12 +1138,25 @@ class App:
             b.pack(side="right", fill="y")
             b.bind("<Enter>", lambda e, b=b, c=hover: b.configure(bg=c))
             b.bind("<Leave>", lambda e, b=b: b.configure(bg=SIDE))
-        for w in (bar, logo, name, tagline):
-            w.bind("<Button-1>", self.drag)
+        self.movable(self.root, (bar, logo, name, tagline))
 
-    def drag(self, event, hwnd=None):
-        ctypes.windll.user32.ReleaseCapture()
-        ctypes.windll.user32.SendMessageW(hwnd or self.hwnd, 0xA1, 2, 0)  # WM_NCLBUTTONDOWN + HTCAPTION: Windows mueve la ventana
+    def movable(self, window, handles, done=None):
+        """Arrastra window desde handles. Lo hace Tk: con WM_NCLBUTTONDOWN el bucle de Windows corre dentro de un
+        callback de Python y Tk 9 aborta el proceso (la app se cerraba al arrastrar)."""
+        grab = []
+
+        def start(e):
+            grab[:] = [] if e.widget.winfo_class() == "Button" else [e.x_root - window.winfo_x(), e.y_root - window.winfo_y()]
+
+        def move(e):
+            if grab:
+                window.geometry(f"+{e.x_root - grab[0]}+{e.y_root - grab[1]}")
+
+        for w in handles:
+            w.bind("<Button-1>", start)
+            w.bind("<B1-Motion>", move)
+            if done:
+                w.bind("<ButtonRelease-1>", done)
 
     def resize(self, event):
         w, h = self.root.minsize()
